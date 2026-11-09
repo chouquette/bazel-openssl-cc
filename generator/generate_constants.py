@@ -477,6 +477,40 @@ GENERATED_CRYPTO_EXTRA_SRCS = {json.dumps(tiered["generated_crypto_extra_srcs"],
     (output_dir / "generated_srcs.bzl").write_text(content)
 
 
+def write_zlib_bzl(output_dir: Path, tiered: dict[str, Any], zlib_dependency: str | None) -> None:
+    """Write zlib.bzl: the zlib dependency of each configuration generated with zlib enabled.
+
+    Keyed like the copts selects in the overlay BUILD.bazel, so the headers are
+    available exactly where Configure defined ZLIB. zlib_dependency is the label
+    providing them, resolved from the generated repository; it is required as
+    soon as one configuration enables zlib.
+    """
+
+    def zlib_deps(defines: list[str]) -> list[str]:
+        if "-DZLIB" not in defines:
+            return []
+        if not zlib_dependency:
+            raise RuntimeError("zlib is enabled, --zlib_dependency must name the label providing zlib.h")
+        return [zlib_dependency]
+
+    no_asm_deps = zlib_deps(tiered["no_asm_defines"])
+    entries = {
+        f"//configs:_asm_{name}": zlib_deps(delta["openssl_defines"])
+        for name, delta in sorted(
+            (get_simple_config_name(platform), delta) for platform, delta in tiered["per_platform"].items()
+        )
+    }
+    entries["//configs:_no_asm_fallback"] = no_asm_deps
+    entries["//conditions:default"] = no_asm_deps
+    indent = " " * 4
+    content = f"""\
+# Generated code. DO NOT EDIT.
+
+ZLIB_DEPS = select({json.dumps(entries, indent=indent)})
+"""
+    (output_dir / "zlib.bzl").write_text(content)
+
+
 def write_platform_bzl(output_dir: Path, config_name: str, platform_delta: dict[str, Any]) -> None:
     indent = " " * 4
     content = f"""\
@@ -1524,6 +1558,7 @@ def main(
     source_strip_prefix: str | None = None,
     configure_args: Sequence[str] = (),
     platform_configure_args: dict[str, list[str]] | None = None,
+    zlib_dependency: str | None = None,
 ) -> None:
     openssl_dir = Path(openssl_source_dir)
     out = Path(output_dir)
@@ -1564,6 +1599,7 @@ def main(
     write_no_asm_bzl(constants_dir, tiered)
     write_templates_bzl(constants_dir, templates, stdout_scripts)
     write_generated_srcs_bzl(constants_dir, tiered)
+    write_zlib_bzl(constants_dir, tiered, zlib_dependency)
     write_constants_build(constants_dir)
 
     for platform in ALL_PLATFORMS:
@@ -1809,6 +1845,13 @@ if __name__ == "__main__":
         "(e.g. linux_x86_64) or a group: windows or unix (every other config, including no_asm), "
         "e.g. --platform_configure_arg=unix=zlib-dynamic",
     )
+    parser.add_argument(
+        "--zlib_dependency",
+        default=None,
+        metavar="LABEL",
+        help="Label providing zlib.h, resolved from the generated repository. Required when zlib is enabled, "
+        "e.g. @openssl_deps//:zlib for the Bazel module",
+    )
     args = parser.parse_args()
     perl = _resolve_perl(args.perl)
 
@@ -1847,4 +1890,5 @@ if __name__ == "__main__":
             source_strip_prefix=args.source_strip_prefix,
             configure_args=args.configure_args,
             platform_configure_args=platform_configure_args,
+            zlib_dependency=args.zlib_dependency,
         )

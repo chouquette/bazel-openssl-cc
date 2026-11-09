@@ -197,6 +197,7 @@ load(
     _WINDOWS_X64_OPENSSL_DEFINES = "OPENSSL_DEFINES",
     _WINDOWS_X64_PERLASM_ENTRIES = "PERLASM",
 )
+load("//bazel/constants:zlib.bzl", "ZLIB_DEPS")
 
 package(
     default_package_metadata = [":package_metadata"],
@@ -704,6 +705,7 @@ cc_library(
         "//conditions:default": NO_ASM_DEFINES,
     }),
     defines = COMMON_DEFINES,
+    implementation_deps = ZLIB_DEPS,
     includes = LIBCRYPTO_INCLUDES + select({
         "@platforms//os:windows": LIBCRYPTO_WINDOWS_INCLUDES,
         "//conditions:default": [],
