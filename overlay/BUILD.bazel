@@ -176,6 +176,7 @@ load(
     "DOFILE_SRC_TEMPLATES",
     "STDOUT_SCRIPTS",
 )
+load("//bazel/constants:version.bzl", "OPENSSL_VERSION")
 load(
     "//bazel/constants:windows_arm64.bzl",
     _WINDOWS_ARM64_ASM_APP_EXTRA = "ASM_APP_EXTRA_SRCS",
@@ -206,13 +207,13 @@ package(
 )
 
 # Supply-chain metadata for every target in this module: OpenSSL is
-# Apache-2.0, identified by the Bazel module name and version.
+# Apache-2.0, identified by its name and the OpenSSL version.
 package_metadata(
     name = "package_metadata",
     attributes = [":license"],
     purl = purl.bazel(
-        module_name(),
-        module_version(),
+        "openssl",
+        OPENSSL_VERSION,
     ),
     visibility = ["//visibility:public"],
 )

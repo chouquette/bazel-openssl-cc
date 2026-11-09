@@ -511,6 +511,16 @@ ZLIB_DEPS = select({json.dumps(entries, indent=indent)})
     (output_dir / "zlib.bzl").write_text(content)
 
 
+def write_version_bzl(output_dir: Path, version: OpenSSLVersion) -> None:
+    """Write version.bzl: the OpenSSL version, for overlays used outside of a Bazel module."""
+    content = f"""\
+# Generated code. DO NOT EDIT.
+
+OPENSSL_VERSION = "{version}"
+"""
+    (output_dir / "version.bzl").write_text(content)
+
+
 def write_platform_bzl(output_dir: Path, config_name: str, platform_delta: dict[str, Any]) -> None:
     indent = " " * 4
     content = f"""\
@@ -1668,6 +1678,7 @@ def main(
     write_generated_srcs_bzl(constants_dir, tiered)
     write_zlib_bzl(constants_dir, tiered, zlib_dependency)
     write_defaults_bzl(constants_dir, no_pregen)
+    write_version_bzl(constants_dir, version)
     write_constants_build(constants_dir)
 
     for platform in ALL_PLATFORMS:
