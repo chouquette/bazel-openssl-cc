@@ -96,6 +96,14 @@ def get_simple_config_name(platform: str) -> str:
     return _CONFIG_NAME_MAP[platform]
 
 
+def get_config_group(platform: str) -> str:
+    """The group a platform belongs to for per-platform Configure arguments: "windows" or "unix"."""
+    return "windows" if platform in WINDOWS_PLATFORMS else "unix"
+
+
+CONFIG_GROUPS = frozenset({"unix", "windows"})
+
+
 def get_configure_target(platform: str) -> str:
     """Return the OpenSSL Configure target string.
 

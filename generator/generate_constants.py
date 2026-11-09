@@ -19,11 +19,12 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Callable, NamedTuple, TypeVar
+from typing import Any, Callable, NamedTuple, Sequence, TypeVar
 
 from common import (
     ALL_PLATFORMS,
     BCR_DIR,
+    CONFIG_GROUPS,
     GENERATOR_DIR,
     IOS_PLATFORMS,
     MAC_PLATFORMS,
@@ -35,6 +36,7 @@ from common import (
     OpenSSLVersion,
     OverlaySources,
     add_to_metadata,
+    get_config_group,
     get_configure_target,
     get_simple_config_name,
     integrity_hash,
@@ -217,7 +219,12 @@ class PlatformData(NamedTuple):
         return set(self.openssl_app_srcs)
 
 
-def run_configure(openssl_dir: Path, platform: str, perl_path: str = "perl") -> None:
+def run_configure(
+    openssl_dir: Path,
+    platform: str,
+    perl_path: str = "perl",
+    extra_args: Sequence[str] = (),
+) -> None:
     """Run OpenSSL's Configure for a given target platform.
 
     We only need configdata.pm from this step. On non-Windows hosts,
@@ -242,6 +249,7 @@ def run_configure(openssl_dir: Path, platform: str, perl_path: str = "perl") -> 
     ]
     if platform == NO_ASM_TARGET:
         configure_cmd.append("no-asm")
+    configure_cmd.extend(extra_args)
 
     env = os.environ.copy()
     if platform in WINDOWS_PLATFORMS:
@@ -323,9 +331,10 @@ def extract_platform_data(
     platform: str,
     srcs: OverlaySources,
     perl_path: str = "perl",
+    configure_args: Sequence[str] = (),
 ) -> PlatformData:
     """Run Configure and extract source lists for a platform."""
-    run_configure(openssl_dir, platform, perl_path=perl_path)
+    run_configure(openssl_dir, platform, perl_path=perl_path, extra_args=configure_args)
 
     simple_platform = "windows" if "WIN" in get_configure_target(platform) else "unix"
     proc = subprocess.run(
@@ -1422,11 +1431,26 @@ def _open_sources(openssl_dir: Path) -> tuple[OpenSSLVersion, OverlaySources]:
     return version, srcs
 
 
+def _configure_args_for(
+    platform: str,
+    configure_args: Sequence[str],
+    platform_configure_args: dict[str, list[str]],
+) -> list[str]:
+    """Extra Configure arguments for *platform*: the common ones, then its group's, then its own."""
+    return (
+        list(configure_args)
+        + platform_configure_args.get(get_config_group(platform), [])
+        + platform_configure_args.get(get_simple_config_name(platform), [])
+    )
+
+
 def perlasm_only(
     openssl_source_dir: str,
     output_dir: str,
     flavors: list[str],
     perl_path: str = "perl",
+    configure_args: Sequence[str] = (),
+    platform_configure_args: dict[str, list[str]] | None = None,
 ) -> None:
     """Generate only perlasm assembly for the requested flavors.
 
@@ -1445,8 +1469,9 @@ def perlasm_only(
 
     platform_data: dict[str, PlatformData] = {}
     for sp in source_platforms:
-        print(f"  Configuring for {sp}...")
-        platform_data[sp] = extract_platform_data(openssl_dir, sp, srcs, perl_path=perl_path)
+        extra = _configure_args_for(sp, configure_args, platform_configure_args or {})
+        print(f"  Configuring for {sp} {' '.join(extra)}...")
+        platform_data[sp] = extract_platform_data(openssl_dir, sp, srcs, perl_path=perl_path, configure_args=extra)
 
     print("=== Pre-generating perlasm assembly ===")
     pregenerate_perlasm(openssl_dir, platform_data, out, perl_path=perl_path, flavors=flavors)
@@ -1497,9 +1522,12 @@ def main(
     pregen_dir: str | None = None,
     source_url: str | None = None,
     source_strip_prefix: str | None = None,
+    configure_args: Sequence[str] = (),
+    platform_configure_args: dict[str, list[str]] | None = None,
 ) -> None:
     openssl_dir = Path(openssl_source_dir)
     out = Path(output_dir)
+    platform_configure_args = platform_configure_args or {}
 
     print(f"Using Perl: {perl_path}")
     version, srcs = _open_sources(openssl_dir)
@@ -1517,12 +1545,14 @@ def main(
     print("=== Extracting source lists for all platforms ===")
     for platform in ALL_PLATFORMS:
         config_name = get_simple_config_name(platform)
-        print(f"  Configuring for {platform} ({config_name})...")
-        data = extract_platform_data(openssl_dir, platform, srcs, perl_path=perl_path)
+        extra = _configure_args_for(platform, configure_args, platform_configure_args)
+        print(f"  Configuring for {platform} ({config_name}) {' '.join(extra)}...")
+        data = extract_platform_data(openssl_dir, platform, srcs, perl_path=perl_path, configure_args=extra)
         platform_data[platform] = data
 
-    print("  Configuring for no-asm fallback...")
-    no_asm_data = extract_platform_data(openssl_dir, NO_ASM_TARGET, srcs, perl_path=perl_path)
+    extra = _configure_args_for(NO_ASM_TARGET, configure_args, platform_configure_args)
+    print(f"  Configuring for no-asm fallback {' '.join(extra)}...")
+    no_asm_data = extract_platform_data(openssl_dir, NO_ASM_TARGET, srcs, perl_path=perl_path, configure_args=extra)
 
     print("=== Computing tiered constants ===")
     tiered = compute_tiered_constants(platform_data, no_asm_data)
@@ -1762,8 +1792,35 @@ if __name__ == "__main__":
         "Only runs perlasm pre-generation for the specified flavors, "
         "then exits. Used by platform-native CI runners.",
     )
+    parser.add_argument(
+        "--configure_arg",
+        action="append",
+        default=[],
+        dest="configure_args",
+        help="Extra argument passed to every Configure run (repeatable), e.g. --configure_arg=no-idea",
+    )
+    parser.add_argument(
+        "--platform_configure_arg",
+        action="append",
+        default=[],
+        dest="platform_configure_args",
+        metavar="CONFIG_NAME=ARG",
+        help="Extra argument passed to Configure for one platform (repeatable). CONFIG_NAME is a config name "
+        "(e.g. linux_x86_64) or a group: windows or unix (every other config, including no_asm), "
+        "e.g. --platform_configure_arg=unix=zlib-dynamic",
+    )
     args = parser.parse_args()
     perl = _resolve_perl(args.perl)
+
+    platform_configure_args: dict[str, list[str]] = {}
+    known_config_names = {get_simple_config_name(p) for p in ALL_PLATFORMS + [NO_ASM_TARGET]} | CONFIG_GROUPS
+    for entry in args.platform_configure_args:
+        config_name, sep, value = entry.partition("=")
+        if not sep or not value:
+            parser.error(f"--platform_configure_arg expects CONFIG_NAME=ARG, got {entry!r}")
+        if config_name not in known_config_names:
+            parser.error(f"--platform_configure_arg: unknown config name {config_name!r}")
+        platform_configure_args.setdefault(config_name, []).append(value)
 
     if args.perlasm_only:
         perlasm_only(
@@ -1771,6 +1828,8 @@ if __name__ == "__main__":
             args.output_dir,
             flavors=args.perlasm_only.split(","),
             perl_path=perl,
+            configure_args=args.configure_args,
+            platform_configure_args=platform_configure_args,
         )
     else:
         buildifier = _resolve_buildifier(args.buildifier)
@@ -1786,4 +1845,6 @@ if __name__ == "__main__":
             pregen_dir=args.pregen_dir,
             source_url=args.source_url,
             source_strip_prefix=args.source_strip_prefix,
+            configure_args=args.configure_args,
+            platform_configure_args=platform_configure_args,
         )
