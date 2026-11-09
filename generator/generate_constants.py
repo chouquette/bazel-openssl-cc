@@ -511,6 +511,61 @@ ZLIB_DEPS = select({json.dumps(entries, indent=indent)})
     (output_dir / "zlib.bzl").write_text(content)
 
 
+_SHARED_LIBRARIES = ("libcrypto", "libssl")
+
+
+def generate_symbol_maps(openssl_dir: Path, out: Path, platform: str, version: OpenSSLVersion, perl_path: str) -> None:
+    """Write the shared library symbol maps OpenSSL's build generates with util/mkdef.pl.
+
+    Must run while the configdata.pm of the platform's Configure run is in the
+    source tree. The --OS value is derived like OpenSSL's Makefile templates do;
+    targets without shared_defflag (e.g. macOS) use no symbol map upstream.
+    """
+    if platform in WINDOWS_PLATFORMS:
+        mkdef_os, extension = "windows", "def"
+    else:
+        proc = subprocess.run(
+            [
+                perl_path,
+                "-I.",
+                "-Mconfigdata",
+                "-e",
+                'print $target{shared_defflag} ? ($target{shared_target} =~ s/-shared$//r) : ""',
+            ],
+            cwd=openssl_dir,
+            stdout=subprocess.PIPE,
+            check=True,
+            text=True,
+        )
+        mkdef_os, extension = proc.stdout.strip(), "ld"
+        if not mkdef_os:
+            return
+
+    dest = out / "symbols" / get_simple_config_name(platform)
+    dest.mkdir(parents=True, exist_ok=True)
+    for lib in _SHARED_LIBRARIES:
+        with (dest / f"{lib}.{extension}").open("w") as f:
+            subprocess.run(
+                [
+                    perl_path,
+                    "util/mkdef.pl",
+                    "--type",
+                    "lib",
+                    "--version",
+                    str(version),
+                    "--ordinals",
+                    f"util/{lib}.num",
+                    "--name",
+                    lib,
+                    "--OS",
+                    mkdef_os,
+                ],
+                cwd=openssl_dir,
+                stdout=f,
+                check=True,
+            )
+
+
 def write_version_bzl(output_dir: Path, version: OpenSSLVersion) -> None:
     """Write version.bzl: the OpenSSL version, for overlays used outside of a Bazel module."""
     content = f"""\
@@ -1654,6 +1709,8 @@ def main(
 
     platform_data: dict[str, PlatformData] = {}
 
+    shutil.rmtree(out / "symbols", ignore_errors=True)
+
     print("=== Extracting source lists for all platforms ===")
     for platform in ALL_PLATFORMS:
         config_name = get_simple_config_name(platform)
@@ -1661,10 +1718,12 @@ def main(
         print(f"  Configuring for {platform} ({config_name}) {' '.join(extra)}...")
         data = extract_platform_data(openssl_dir, platform, srcs, perl_path=perl_path, configure_args=extra)
         platform_data[platform] = data
+        generate_symbol_maps(openssl_dir, out, platform, version, perl_path)
 
     extra = _configure_args_for(NO_ASM_TARGET, configure_args, platform_configure_args)
     print(f"  Configuring for no-asm fallback {' '.join(extra)}...")
     no_asm_data = extract_platform_data(openssl_dir, NO_ASM_TARGET, srcs, perl_path=perl_path, configure_args=extra)
+    generate_symbol_maps(openssl_dir, out, NO_ASM_TARGET, version, perl_path)
 
     print("=== Computing tiered constants ===")
     tiered = compute_tiered_constants(platform_data, no_asm_data)
