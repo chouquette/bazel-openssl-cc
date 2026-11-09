@@ -1,5 +1,11 @@
 load("@bazel_skylib//lib:selects.bzl", "selects")
+load("//bazel:gnu_compiler_flag.bzl", "gnu_compiler_flag")
 load("//bazel/constants:features.bzl", "openssl_feature_config_settings", "openssl_pregen_config_settings")
+
+gnu_compiler_flag(
+    name = "gnu_compiler",
+    visibility = ["//visibility:public"],
+)
 
 openssl_feature_config_settings()
 
@@ -134,6 +140,20 @@ selects.config_setting_group(
         ":windows_x64",
         ":windows_mingw",
     ],
+    visibility = ["//visibility:public"],
+)
+
+# The mingw64 configuration: GNU-style compilers on x86_64. A plain
+# config_setting, so it specialises :windows_x64 in selects.
+config_setting(
+    name = "windows_x64_gnu",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_64",
+    ],
+    flag_values = {
+        ":gnu_compiler": "True",
+    },
     visibility = ["//visibility:public"],
 )
 

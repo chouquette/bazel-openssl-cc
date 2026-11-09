@@ -31,8 +31,10 @@ from common import (
     NO_ASM_TARGET,
     OVERLAY_DIR,
     PLATFORM_CONSTRAINTS,
+    PLATFORM_FLAG_VALUES,
     PREGEN_DIR,
     WINDOWS_PLATFORMS,
+    WINDOWS_X86_MINGW,
     OpenSSLVersion,
     OverlaySources,
     add_to_metadata,
@@ -336,7 +338,6 @@ def extract_platform_data(
     """Run Configure and extract source lists for a platform."""
     run_configure(openssl_dir, platform, perl_path=perl_path, extra_args=configure_args)
 
-    simple_platform = "windows" if "WIN" in get_configure_target(platform) else "unix"
     proc = subprocess.run(
         [
             perl_path,
@@ -344,7 +345,6 @@ def extract_platform_data(
             "-l",
             "-Mconfigdata",
             str(srcs.resolve(_EXTRACT_SRCS_PL)),
-            simple_platform,
         ],
         cwd=openssl_dir,
         stdout=subprocess.PIPE,
@@ -606,6 +606,8 @@ def _get_platform_metadata(platform: str) -> tuple[str, str, str]:
     These values are deterministic from the platform type and don't need
     extraction from configdata.pm (where dso_scheme is overridden to undef).
     """
+    if platform == WINDOWS_X86_MINGW:
+        return ("mingw", "WIN32", ".dll")
     if platform in WINDOWS_PLATFORMS:
         return ("Windows", "WIN32", ".dll")
     if platform in MAC_PLATFORMS or platform in IOS_PLATFORMS:
@@ -873,7 +875,7 @@ _PERLASM_FLAVORS: dict[str, dict[str, Any]] = {
     },
     # Windows groups are MSVC flavoured (MASM for x64, clang-cl's win64 for
     # arm64), as upstream's VC-WIN64A-masm and VC-WIN64-CLANGASM-ARM targets
-    # are; mingw builds use the from-source path. With cl.exe the scripts'
+    # are, except mingw64, which assembles with gas. With cl.exe the scripts'
     # gcc/clang version probes never match, hence the "none" profile.
     "masm": {
         "source_platform": "VC-WIN64A-masm",
@@ -884,6 +886,11 @@ _PERLASM_FLAVORS: dict[str, dict[str, Any]] = {
         "source_platform": "VC-WIN64-CLANGASM-ARM",
         "consumers": ["windows_arm64"],
         "probe_profile": "none",
+    },
+    "mingw64": {
+        "source_platform": "mingw64",
+        "consumers": ["windows_x64_mingw"],
+        "probe_profile": "gnu",
     },
 }
 
@@ -1472,11 +1479,12 @@ def _render_pregen_config_settings_macro(known_platforms: list[str]) -> str:
         if not constraints:
             continue
         os_label, cpu_label = constraints
+        flag_values = {"//:use-no-asm-fallback": "False"} | PLATFORM_FLAG_VALUES.get(platform, {})
         lines.append(
             f"    native.config_setting(\n"
             f'        name = "_asm_{platform}",\n'
             f'        constraint_values = ["{os_label}", "{cpu_label}"],\n'
-            f'        flag_values = {{"//:use-no-asm-fallback": "False"}},\n'
+            f"        flag_values = {json.dumps(flag_values)},\n"
             f'        visibility = ["//visibility:public"],\n'
             f"    )\n"
         )
@@ -1489,11 +1497,12 @@ def _render_pregen_config_settings_macro(known_platforms: list[str]) -> str:
         if not constraints:
             continue
         os_label, cpu_label = constraints
+        flag_values = {"//:use-pregenerated": "True"} | PLATFORM_FLAG_VALUES.get(platform, {})
         lines.append(
             f"    native.config_setting(\n"
             f'        name = "_pregen_{platform}",\n'
             f'        constraint_values = ["{os_label}", "{cpu_label}"],\n'
-            f'        flag_values = {{"//:use-pregenerated": "True"}},\n'
+            f"        flag_values = {json.dumps(flag_values)},\n"
             f'        visibility = ["//visibility:public"],\n'
             f"    )\n"
         )
@@ -1506,11 +1515,14 @@ def _render_pregen_config_settings_macro(known_platforms: list[str]) -> str:
         if not constraints:
             continue
         os_label, cpu_label = constraints
+        flag_values = {"//:use-pregenerated": "True", "//:use-no-asm-fallback": "False"} | PLATFORM_FLAG_VALUES.get(
+            platform, {}
+        )
         lines.append(
             f"    native.config_setting(\n"
             f'        name = "_pregen_asm_{platform}",\n'
             f'        constraint_values = ["{os_label}", "{cpu_label}"],\n'
-            f'        flag_values = {{"//:use-pregenerated": "True", "//:use-no-asm-fallback": "False"}},\n'
+            f"        flag_values = {json.dumps(flag_values)},\n"
             f'        visibility = ["//visibility:public"],\n'
             f"    )\n"
         )

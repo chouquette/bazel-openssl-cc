@@ -63,8 +63,9 @@ At build time, `select()` routes between three modes:
 | **No-asm**                  | `use-no-asm-fallback=True`                    | Portable C only. No assembly, no Perl.                                                               |
 
 Platforms are identified by OS and CPU, plus the compiler on Windows. glibc is
-assumed on Linux and MSVC on Windows (the pre-generated Windows assembly is
-MASM flavoured; mingw builds need `use-pregenerated=False`). libc constraints
+assumed on Linux and MSVC on Windows, except for GNU-style compilers (mingw-gcc,
+gcc, clang) on x86_64, which are configured with upstream's `mingw64` target,
+i.e. clang is assumed to target the mingw-w64 ABI. libc constraints
 could come from [platforms_contrib](https://github.com/bazel-contrib/platforms_contrib/)
 in the future.
 

@@ -18,7 +18,12 @@ _PREGEN_PLATFORMS = [
     "linux_x86_64",
     "windows_arm64",
     "windows_x64",
+    "windows_x64_mingw",
 ]
+
+_CONFIG_SETTINGS = {
+    "windows_x64_mingw": "windows_x64_gnu",
+}
 
 def _strip_prefix(path, prefix):
     parts = path.split(prefix, 1)
@@ -131,7 +136,7 @@ def pregen_filegroups():
 
     # One group per directory the generator writes under generated/asm/
     # (_PERLASM_FLAVORS in generate_constants.py).
-    for flavor in ["elf", "ios64", "linux32", "linux64", "linux64le", "macosx", "masm", "riscv64", "s390x", "win64"]:
+    for flavor in ["elf", "ios64", "linux32", "linux64", "linux64le", "macosx", "masm", "mingw64", "riscv64", "s390x", "win64"]:
         native.filegroup(
             name = "asm_" + flavor,
             srcs = native.glob(
@@ -149,13 +154,13 @@ def pregen_overlay_targets():
     includes work without any additional include-path plumbing.
     """
     platform_prefix = {
-        "//configs:" + p: "generated/" + p + "/"
+        "//configs:" + _CONFIG_SETTINGS.get(p, p): "generated/" + p + "/"
         for p in _PREGEN_PLATFORMS
     }
     platform_prefix["//conditions:default"] = "generated/no_asm/"
 
     platform_srcs = {
-        "//configs:" + p: ["@openssl_pregen//:" + p + "_hdrs"]
+        "//configs:" + _CONFIG_SETTINGS.get(p, p): ["@openssl_pregen//:" + p + "_hdrs"]
         for p in _PREGEN_PLATFORMS
     }
     platform_srcs["//conditions:default"] = ["@openssl_pregen//:no_asm_hdrs"]

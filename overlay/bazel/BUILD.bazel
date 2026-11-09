@@ -65,8 +65,8 @@ cc_test(
     name = "sha256_test",
     srcs = ["sha256_test.cc"],
     copts = select({
-        "//configs:windows_arm64": ["/std:c++17"],
-        "//configs:windows_x64": ["/std:c++17"],
+        "@rules_cc//cc/compiler:clang-cl": ["/std:c++17"],
+        "@rules_cc//cc/compiler:msvc-cl": ["/std:c++17"],
         "//conditions:default": ["-std=c++17"],
     }),
     data = ["@openssl"],

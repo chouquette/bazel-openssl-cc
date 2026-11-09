@@ -33,6 +33,7 @@ LINUX_S390X = "linux64-s390x"
 LINUX_ARM = "linux-armv4"
 WINDOWS_ARM64 = "VC-WIN64-CLANGASM-ARM"
 WINDOWS_X86 = "VC-WIN64A-masm"
+WINDOWS_X86_MINGW = "mingw64"
 ANDROID_ARM64 = "android-arm64"
 ANDROID_X86 = "android-x86_64"
 IOS_ARM64 = "ios64-cross"
@@ -42,7 +43,7 @@ FREEBSD_ARM64 = "BSD-aarch64"
 LINUX_PLATFORMS = [LINUX_ARM64, LINUX_X86, LINUX_RISCV64, LINUX_PPC64LE, LINUX_S390X, LINUX_ARM]
 MAC_PLATFORMS = [MAC_ARM64, MAC_X86]
 UNIX_PLATFORMS = LINUX_PLATFORMS + MAC_PLATFORMS
-WINDOWS_PLATFORMS = [WINDOWS_ARM64, WINDOWS_X86]
+WINDOWS_PLATFORMS = [WINDOWS_ARM64, WINDOWS_X86, WINDOWS_X86_MINGW]
 ANDROID_PLATFORMS = [ANDROID_ARM64, ANDROID_X86]
 IOS_PLATFORMS = [IOS_ARM64]
 FREEBSD_PLATFORMS = [FREEBSD_ARM64, FREEBSD_X86]
@@ -64,11 +65,18 @@ PLATFORM_CONSTRAINTS: dict[str, tuple[str, str]] = {
     "linux_arm": ("@platforms//os:linux", "@platforms//cpu:arm"),
     "windows_arm64": ("@platforms//os:windows", "@platforms//cpu:arm64"),
     "windows_x64": ("@platforms//os:windows", "@platforms//cpu:x86_64"),
+    "windows_x64_mingw": ("@platforms//os:windows", "@platforms//cpu:x86_64"),
     "android_arm64": ("@platforms//os:android", "@platforms//cpu:arm64"),
     "android_x86_64": ("@platforms//os:android", "@platforms//cpu:x86_64"),
     "ios_arm64": ("@platforms//os:ios", "@platforms//cpu:arm64"),
     "freebsd_x86_64": ("@platforms//os:freebsd", "@platforms//cpu:x86_64"),
     "freebsd_aarch64": ("@platforms//os:freebsd", "@platforms//cpu:aarch64"),
+}
+
+# Extra flag_values for configs that share their os+cpu with another config,
+# so their config_settings specialise the plain os+cpu ones.
+PLATFORM_FLAG_VALUES: dict[str, dict[str, str]] = {
+    "windows_x64_mingw": {"//configs:gnu_compiler": "True"},
 }
 
 _CONFIG_NAME_MAP = {
@@ -82,6 +90,7 @@ _CONFIG_NAME_MAP = {
     LINUX_ARM: "linux_arm",
     WINDOWS_ARM64: "windows_arm64",
     WINDOWS_X86: "windows_x64",
+    WINDOWS_X86_MINGW: "windows_x64_mingw",
     ANDROID_ARM64: "android_arm64",
     ANDROID_X86: "android_x86_64",
     IOS_ARM64: "ios_arm64",

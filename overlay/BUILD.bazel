@@ -199,6 +199,17 @@ load(
     _WINDOWS_X64_OPENSSL_DEFINES = "OPENSSL_DEFINES",
     _WINDOWS_X64_PERLASM_ENTRIES = "PERLASM",
 )
+load(
+    "//bazel/constants:windows_x64_mingw.bzl",
+    _WINDOWS_X64_MINGW_ASM_APP_EXTRA = "ASM_APP_EXTRA_SRCS",
+    _WINDOWS_X64_MINGW_ASM_CRYPTO_EXTRA = "ASM_CRYPTO_EXTRA_SRCS",
+    _WINDOWS_X64_MINGW_ASM_SSL_EXTRA = "ASM_SSL_EXTRA_SRCS",
+    _WINDOWS_X64_MINGW_LIBCRYPTO_DEFINES = "LIBCRYPTO_DEFINES",
+    _WINDOWS_X64_MINGW_LIBSSL_DEFINES = "LIBSSL_DEFINES",
+    _WINDOWS_X64_MINGW_OPENSSL_APP_DEFINES = "OPENSSL_APP_DEFINES",
+    _WINDOWS_X64_MINGW_OPENSSL_DEFINES = "OPENSSL_DEFINES",
+    _WINDOWS_X64_MINGW_PERLASM_ENTRIES = "PERLASM",
+)
 load("//bazel/constants:zlib.bzl", "ZLIB_DEPS")
 
 package(
@@ -278,6 +289,7 @@ perl_library(
         "//configs:linux_x86_64": ["configdata/linux_x86_64/configdata.pm"],
         "//configs:windows_arm64": ["configdata/windows_arm64/configdata.pm"],
         "//configs:windows_x64": ["configdata/windows_x64/configdata.pm"],
+        "//configs:windows_x64_gnu": ["configdata/windows_x64_mingw/configdata.pm"],
         "//conditions:default": ["configdata/no_asm/configdata.pm"],
     }),
     data = ["VERSION.dat"],
@@ -297,6 +309,7 @@ perl_library(
         "//configs:linux_x86_64": ["configdata/linux_x86_64"],
         "//configs:windows_arm64": ["configdata/windows_arm64"],
         "//configs:windows_x64": ["configdata/windows_x64"],
+        "//configs:windows_x64_gnu": ["configdata/windows_x64_mingw"],
         "//conditions:default": ["configdata/no_asm"],
     }),
 )
@@ -400,6 +413,7 @@ _PERLASM = {
         _LINUX_X86_64_PERLASM_ENTRIES,
         _WINDOWS_ARM64_PERLASM_ENTRIES,
         _WINDOWS_X64_PERLASM_ENTRIES,
+        _WINDOWS_X64_MINGW_PERLASM_ENTRIES,
     ]
     for out, entry in perlasm.items()
 }
@@ -438,9 +452,8 @@ openssl_perlasm(
         "//configs:windows_arm64_clang_cl": "win64",
         "//configs:windows_arm64_mingw": "linux64",
         "//configs:windows_arm64_msvc": "win64",
-        "//configs:windows_x64_clang": "mingw64",
         "//configs:windows_x64_clang_cl": "masm",
-        "//configs:windows_x64_mingw": "mingw64",
+        "//configs:windows_x64_gnu": "mingw64",
         "//configs:windows_x64_msvc": "masm",
         "//conditions:default": "",
     }),
@@ -461,6 +474,7 @@ openssl_perlasm(
         "//configs:linux_x86_64": openssl_perlasm_tools(_LINUX_X86_64_PERLASM_ENTRIES),
         "//configs:windows_arm64": openssl_perlasm_tools(_WINDOWS_ARM64_PERLASM_ENTRIES),
         "//configs:windows_x64": openssl_perlasm_tools(_WINDOWS_X64_PERLASM_ENTRIES),
+        "//configs:windows_x64_gnu": openssl_perlasm_tools(_WINDOWS_X64_MINGW_PERLASM_ENTRIES),
         "//conditions:default": {},
     }),
     tags = ["manual"],
@@ -528,9 +542,10 @@ COMMON_OPENSSL_COPTS = [
     ],
 })
 
-# All Windows constants come from upstream's VC-WIN64A / VC-WIN64-CLANGASM-ARM
-# targets, i.e. MSVC is assumed on Windows (mingw's own Configure target is
-# not modelled); glibc is assumed on Linux. libc constraints could come from
+# Windows constants come from upstream's VC-WIN64A / VC-WIN64-CLANGASM-ARM
+# targets, i.e. MSVC is assumed on Windows, except for GNU-style compilers
+# (mingw-gcc, gcc, clang) on x86_64, which use the mingw64 target; glibc is assumed
+# on Linux. libc constraints could come from
 # https://github.com/bazel-contrib/platforms_contrib/ in the future.
 COMMON_DEFINES = select({
     "//configs:windows_non_msvc": [
@@ -656,12 +671,13 @@ cc_library(
         "//configs:_asm_linux_x86_64": _LINUX_X86_64_ASM_CRYPTO_EXTRA + [":perlasm_genfiles"],
         "//configs:_asm_windows_arm64": _WINDOWS_ARM64_ASM_CRYPTO_EXTRA + [":perlasm_genfiles"],
         "//configs:_asm_windows_x64": _WINDOWS_X64_ASM_CRYPTO_EXTRA + [":perlasm_genfiles"],
+        "//configs:_asm_windows_x64_mingw": _WINDOWS_X64_MINGW_ASM_CRYPTO_EXTRA + [":perlasm_genfiles"],
         # No-asm escape hatch (mutually exclusive with _asm_*/_pregen_asm_*)
         "//configs:_no_asm_fallback": NO_ASM_CRYPTO_EXTRA_SRCS,
         # Pre-generated assembly (most specialized). Linux groups assume glibc
-        # and the Windows groups are MSVC flavoured; libc constraints could
-        # come from https://github.com/bazel-contrib/platforms_contrib/ in
-        # the future. mingw builds use --@openssl//:use-pregenerated=False.
+        # and the Windows groups are MSVC flavoured, except mingw64; libc
+        # constraints could come from
+        # https://github.com/bazel-contrib/platforms_contrib/ in the future.
         "//configs:_pregen_asm_android_arm64": _ANDROID_ARM64_ASM_CRYPTO_EXTRA + ["@openssl_pregen//:asm_linux64"],
         "//configs:_pregen_asm_android_x86_64": _ANDROID_X86_64_ASM_CRYPTO_EXTRA + ["@openssl_pregen//:asm_elf"],
         "//configs:_pregen_asm_darwin_arm64": _DARWIN_ARM64_ASM_CRYPTO_EXTRA + ["@openssl_pregen//:asm_ios64"],
@@ -677,6 +693,7 @@ cc_library(
         "//configs:_pregen_asm_linux_x86_64": _LINUX_X86_64_ASM_CRYPTO_EXTRA + ["@openssl_pregen//:asm_elf"],
         "//configs:_pregen_asm_windows_arm64": _WINDOWS_ARM64_ASM_CRYPTO_EXTRA + ["@openssl_pregen//:asm_win64"],
         "//configs:_pregen_asm_windows_x64": _WINDOWS_X64_ASM_CRYPTO_EXTRA + ["@openssl_pregen//:asm_masm"],
+        "//configs:_pregen_asm_windows_x64_mingw": _WINDOWS_X64_MINGW_ASM_CRYPTO_EXTRA + ["@openssl_pregen//:asm_mingw64"],
         # Unknown platforms
         "//conditions:default": NO_ASM_CRYPTO_EXTRA_SRCS,
     }) + select({
@@ -703,6 +720,7 @@ cc_library(
         "//configs:_asm_linux_x86_64": _LINUX_X86_64_OPENSSL_DEFINES + _LINUX_X86_64_LIBCRYPTO_DEFINES,
         "//configs:_asm_windows_arm64": _WINDOWS_ARM64_OPENSSL_DEFINES + _WINDOWS_ARM64_LIBCRYPTO_DEFINES,
         "//configs:_asm_windows_x64": _WINDOWS_X64_OPENSSL_DEFINES + _WINDOWS_X64_LIBCRYPTO_DEFINES,
+        "//configs:_asm_windows_x64_mingw": _WINDOWS_X64_MINGW_OPENSSL_DEFINES + _WINDOWS_X64_MINGW_LIBCRYPTO_DEFINES,
         "//configs:_no_asm_fallback": NO_ASM_DEFINES,
         "//conditions:default": NO_ASM_DEFINES,
     }),
@@ -756,6 +774,7 @@ cc_library(
         "//configs:_asm_linux_x86_64": _LINUX_X86_64_ASM_SSL_EXTRA,
         "//configs:_asm_windows_arm64": _WINDOWS_ARM64_ASM_SSL_EXTRA,
         "//configs:_asm_windows_x64": _WINDOWS_X64_ASM_SSL_EXTRA,
+        "//configs:_asm_windows_x64_mingw": _WINDOWS_X64_MINGW_ASM_SSL_EXTRA,
         "//configs:_no_asm_fallback": NO_ASM_SSL_EXTRA_SRCS,
         "//conditions:default": NO_ASM_SSL_EXTRA_SRCS,
     }),
@@ -776,6 +795,7 @@ cc_library(
         "//configs:_asm_linux_x86_64": _LINUX_X86_64_OPENSSL_DEFINES + _LINUX_X86_64_LIBSSL_DEFINES,
         "//configs:_asm_windows_arm64": _WINDOWS_ARM64_OPENSSL_DEFINES + _WINDOWS_ARM64_LIBSSL_DEFINES,
         "//configs:_asm_windows_x64": _WINDOWS_X64_OPENSSL_DEFINES + _WINDOWS_X64_LIBSSL_DEFINES,
+        "//configs:_asm_windows_x64_mingw": _WINDOWS_X64_MINGW_OPENSSL_DEFINES + _WINDOWS_X64_MINGW_LIBSSL_DEFINES,
         "//configs:_no_asm_fallback": NO_ASM_DEFINES,
         "//conditions:default": NO_ASM_DEFINES,
     }),
@@ -814,6 +834,7 @@ cc_binary(
         "//configs:_asm_linux_x86_64": _LINUX_X86_64_ASM_APP_EXTRA,
         "//configs:_asm_windows_arm64": _WINDOWS_ARM64_ASM_APP_EXTRA,
         "//configs:_asm_windows_x64": _WINDOWS_X64_ASM_APP_EXTRA,
+        "//configs:_asm_windows_x64_mingw": _WINDOWS_X64_MINGW_ASM_APP_EXTRA,
         "//configs:_no_asm_fallback": NO_ASM_APP_EXTRA_SRCS,
         "//conditions:default": NO_ASM_APP_EXTRA_SRCS,
     }) + COMMON_APP_HDRS + select({
@@ -839,6 +860,7 @@ cc_binary(
         "//configs:_asm_linux_x86_64": _LINUX_X86_64_OPENSSL_APP_DEFINES,
         "//configs:_asm_windows_arm64": _WINDOWS_ARM64_OPENSSL_APP_DEFINES,
         "//configs:_asm_windows_x64": _WINDOWS_X64_OPENSSL_APP_DEFINES,
+        "//configs:_asm_windows_x64_mingw": _WINDOWS_X64_MINGW_OPENSSL_APP_DEFINES,
         "//configs:_no_asm_fallback": [],
         "//conditions:default": [],
     }),
