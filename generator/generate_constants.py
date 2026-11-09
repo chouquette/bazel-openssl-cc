@@ -239,13 +239,10 @@ def run_configure(
     if configdata_path.exists():
         configdata_path.unlink()
 
-    write_config_file(openssl_dir, platform)
-
     configure_cmd = [
         perl_path,
         "Configure",
-        "--config=config.conf",
-        _bazel_config_name(platform),
+        *_configure_target_args(openssl_dir, platform),
         "no-afalgeng",
         "no-dynamic-engine",
     ]
@@ -287,25 +284,21 @@ _ANDROID_CONFIG_OVERRIDES = {
 }
 
 
-def _bazel_config_name(platform: str) -> str:
-    """Name of the Configure target written to config.conf for *platform*.
+def _configure_target_args(openssl_dir: Path, platform: str) -> list[str]:
+    """Configure arguments selecting the target for *platform*.
 
-    It keeps the upstream target name as a prefix because Configure makes a
-    few decisions from the *name* (e.g. ``winstore`` is only enabled when it
-    starts with ``VC-``/``mingw``), and a bare custom name would silently
-    diverge from an upstream build of the same target.
+    Upstream targets are used as is: Configure and the platform modules make
+    decisions from the target *name* (e.g. mingw64's DLL names). Android
+    targets go through a target written to config.conf (see
+    _ANDROID_CONFIG_OVERRIDES), named after the upstream one.
     """
-    return f"{get_configure_target(platform)}-bazel"
-
-
-def write_config_file(openssl_dir: Path, platform: str) -> None:
     target = get_configure_target(platform)
-    name = _bazel_config_name(platform)
     override = _ANDROID_CONFIG_OVERRIDES.get(target)
-    if override:
-        with (openssl_dir / "config.conf").open("w") as f:
-            f.write(
-                f"""(
+    if not override:
+        return [target]
+    name = f"{target}-bazel"
+    (openssl_dir / "config.conf").write_text(
+        f"""(
     '{name}' => {{
         inherit_from   => [ "{override["inherit_from"]}" ],
         asm_arch       => '{override["asm_arch"]}',
@@ -314,18 +307,8 @@ def write_config_file(openssl_dir: Path, platform: str) -> None:
     }}
 );
 """
-            )
-    else:
-        with (openssl_dir / "config.conf").open("w") as f:
-            f.write(
-                f"""(
-    '{name}' => {{
-        inherit_from => [ "{target}" ],
-        dso_scheme   => undef,
-    }}
-);
-"""
-            )
+    )
+    return ["--config=config.conf", name]
 
 
 def extract_platform_data(
@@ -604,7 +587,7 @@ def _get_platform_metadata(platform: str) -> tuple[str, str, str]:
     """Return (perl_platform, dso_scheme, dso_extension) for a platform.
 
     These values are deterministic from the platform type and don't need
-    extraction from configdata.pm (where dso_scheme is overridden to undef).
+    extraction from configdata.pm.
     """
     if platform == WINDOWS_X86_MINGW:
         return ("mingw", "WIN32", ".dll")
