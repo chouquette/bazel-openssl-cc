@@ -1545,6 +1545,72 @@ def check_perlasm_includes(generated_asm: Path, openssl_dir: Path) -> None:
         )
 
 
+def write_pregen(
+    openssl_dir: Path,
+    out: Path,
+    pregen_dir: str | None,
+    platform_data: dict[str, PlatformData],
+    templates: Any,
+    stdout_scripts: Any,
+    srcs: OverlaySources,
+    perl_path: str,
+) -> None:
+    """Pre-generate headers, sources and assembly into the pregen directory."""
+    print("=== Pre-generating template outputs ===")
+    pregenerate_templates(openssl_dir, platform_data, templates, out, srcs, perl_path=perl_path)
+
+    # Place configdata in the source tree so $_repo_root resolves correctly.
+    any_config = get_simple_config_name(next(iter(platform_data)))
+    try:
+        local_configdata = _place_configdata_in_source(
+            openssl_dir,
+            out / "configdata" / any_config,
+            any_config,
+        )
+        print("=== Pre-generating progs.h/progs.c ===")
+        pregenerate_progs(openssl_dir, out, local_configdata, perl_path=perl_path)
+        if stdout_scripts:
+            print(f"=== Pre-generating {len(stdout_scripts)} script-generated files ===")
+            pregenerate_stdout_scripts(openssl_dir, out, local_configdata, stdout_scripts, srcs, perl_path=perl_path)
+    finally:
+        _cleanup_source_configdata(openssl_dir)
+
+    print("=== Pre-generating buildinf.h ===")
+    generate_buildinf_h(out, srcs)
+
+    print("=== Pre-generating perlasm assembly ===")
+    pregenerate_perlasm(openssl_dir, platform_data, out, perl_path=perl_path)
+    check_perlasm_includes(out / "generated" / "asm", openssl_dir)
+
+    # Move generated/ to a separate pregen directory so the overlay stays small.
+    pregen = Path(pregen_dir) if pregen_dir else out.parent / "pregen"
+    pregen.mkdir(parents=True, exist_ok=True)
+    generated_src = out / "generated"
+    if generated_src.exists():
+        generated_dst = pregen / "generated"
+        if generated_dst.exists():
+            shutil.rmtree(generated_dst)
+        shutil.move(str(generated_src), str(generated_dst))
+    srcs.copy_tree(PREGEN_DIR, pregen)
+    (pregen / "WORKSPACE.bazel").write_text('workspace(name = "openssl_pregen")\n')
+    # The archive only holds files derived from OpenSSL sources; ship its license with them.
+    shutil.copyfile(openssl_dir / "LICENSE.txt", pregen / "LICENSE.txt")
+    print(f"Pregen files written to: {pregen}")
+
+
+def write_defaults_bzl(output_dir: Path, no_pregen: bool) -> None:
+    """Write defaults.bzl: build setting defaults that depend on how the overlay was generated.
+
+    Without the pre-generated archive, the overlay builds with Perl by default.
+    """
+    content = f"""\
+# Generated code. DO NOT EDIT.
+
+USE_PREGENERATED_DEFAULT = {not no_pregen}
+"""
+    (output_dir / "defaults.bzl").write_text(content)
+
+
 def main(
     openssl_source_dir: str,
     output_dir: str,
@@ -1559,6 +1625,7 @@ def main(
     configure_args: Sequence[str] = (),
     platform_configure_args: dict[str, list[str]] | None = None,
     zlib_dependency: str | None = None,
+    no_pregen: bool = False,
 ) -> None:
     openssl_dir = Path(openssl_source_dir)
     out = Path(output_dir)
@@ -1600,6 +1667,7 @@ def main(
     write_templates_bzl(constants_dir, templates, stdout_scripts)
     write_generated_srcs_bzl(constants_dir, tiered)
     write_zlib_bzl(constants_dir, tiered, zlib_dependency)
+    write_defaults_bzl(constants_dir, no_pregen)
     write_constants_build(constants_dir)
 
     for platform in ALL_PLATFORMS:
@@ -1619,46 +1687,8 @@ def main(
     print("=== Generating per-platform configdata stubs ===")
     generate_configdata_stubs(platform_data, no_asm_data, out, srcs)
 
-    print("=== Pre-generating template outputs ===")
-    pregenerate_templates(openssl_dir, platform_data, templates, out, srcs, perl_path=perl_path)
-
-    # Place configdata in the source tree so $_repo_root resolves correctly.
-    any_config = get_simple_config_name(next(iter(platform_data)))
-    try:
-        local_configdata = _place_configdata_in_source(
-            openssl_dir,
-            out / "configdata" / any_config,
-            any_config,
-        )
-        print("=== Pre-generating progs.h/progs.c ===")
-        pregenerate_progs(openssl_dir, out, local_configdata, perl_path=perl_path)
-        if stdout_scripts:
-            print(f"=== Pre-generating {len(stdout_scripts)} script-generated files ===")
-            pregenerate_stdout_scripts(openssl_dir, out, local_configdata, stdout_scripts, srcs, perl_path=perl_path)
-    finally:
-        _cleanup_source_configdata(openssl_dir)
-
-    print("=== Pre-generating buildinf.h ===")
-    generate_buildinf_h(out, srcs)
-
-    print("=== Pre-generating perlasm assembly ===")
-    pregenerate_perlasm(openssl_dir, platform_data, out, perl_path=perl_path)
-    check_perlasm_includes(out / "generated" / "asm", openssl_dir)
-
-    # Move generated/ to a separate pregen directory so the overlay stays small.
-    pregen = Path(pregen_dir) if pregen_dir else out.parent / "pregen"
-    pregen.mkdir(parents=True, exist_ok=True)
-    generated_src = out / "generated"
-    if generated_src.exists():
-        generated_dst = pregen / "generated"
-        if generated_dst.exists():
-            shutil.rmtree(generated_dst)
-        shutil.move(str(generated_src), str(generated_dst))
-    srcs.copy_tree(PREGEN_DIR, pregen)
-    (pregen / "WORKSPACE.bazel").write_text('workspace(name = "openssl_pregen")\n')
-    # The archive only holds files derived from OpenSSL sources; ship its license with them.
-    shutil.copyfile(openssl_dir / "LICENSE.txt", pregen / "LICENSE.txt")
-    print(f"Pregen files written to: {pregen}")
+    if not no_pregen:
+        write_pregen(openssl_dir, out, pregen_dir, platform_data, templates, stdout_scripts, srcs, perl_path)
 
     # Overlay root = out. overlay/ in this repo has the same layout as the
     # overlay shipped to BCR, so it is copied as-is (with version overrides),
@@ -1852,7 +1882,14 @@ if __name__ == "__main__":
         help="Label providing zlib.h, resolved from the generated repository. Required when zlib is enabled, "
         "e.g. @openssl_deps//:zlib for the Bazel module",
     )
+    parser.add_argument(
+        "--no_pregen",
+        action="store_true",
+        help="Skip the pre-generated archive and make the overlay build with Perl by default",
+    )
     args = parser.parse_args()
+    if args.no_pregen and args.bcr_dir:
+        parser.error("--no_pregen cannot be combined with --bcr_dir: BCR modules ship the pre-generated archive")
     perl = _resolve_perl(args.perl)
 
     platform_configure_args: dict[str, list[str]] = {}
@@ -1891,4 +1928,5 @@ if __name__ == "__main__":
             configure_args=args.configure_args,
             platform_configure_args=platform_configure_args,
             zlib_dependency=args.zlib_dependency,
+            no_pregen=args.no_pregen,
         )

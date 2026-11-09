@@ -59,6 +59,7 @@ load(
     _DARWIN_X86_64_OPENSSL_DEFINES = "OPENSSL_DEFINES",
     _DARWIN_X86_64_PERLASM_ENTRIES = "PERLASM",
 )
+load("//bazel/constants:defaults.bzl", "USE_PREGENERATED_DEFAULT")
 load(
     "//bazel/constants:features.bzl",
     "FEATURE_DEFINES",
@@ -238,7 +239,7 @@ openssl_feature_flags()
 # --- Pre-generation routing ---
 bool_flag(
     name = "use-pregenerated",
-    build_setting_default = True,
+    build_setting_default = USE_PREGENERATED_DEFAULT,
     visibility = ["//visibility:public"],
 )
 
