@@ -26,15 +26,12 @@ from common import (
     BCR_DIR,
     CONFIG_GROUPS,
     GENERATOR_DIR,
-    IOS_PLATFORMS,
-    MAC_PLATFORMS,
     NO_ASM_TARGET,
     OVERLAY_DIR,
     PLATFORM_CONSTRAINTS,
     PLATFORM_FLAG_VALUES,
     PREGEN_DIR,
     WINDOWS_PLATFORMS,
-    WINDOWS_X86_MINGW,
     OpenSSLVersion,
     OverlaySources,
     add_to_metadata,
@@ -113,6 +110,11 @@ class ConfigHeaderData(NamedTuple):
     openssl_disabled_protocols: list[str]
     openssl_disabled_algorithms: list[str]
     openssl_disabled_features: list[str]
+    perl_platform: str
+    dso_scheme: str
+    dso_extension: str
+    shared_target: str
+    shared_defflag: str
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ConfigHeaderData":
@@ -134,6 +136,11 @@ class ConfigHeaderData(NamedTuple):
             openssl_disabled_protocols=_str_list("config_openssl_disabled_protocols"),
             openssl_disabled_algorithms=_str_list("config_openssl_disabled_algorithms"),
             openssl_disabled_features=_str_list("config_openssl_disabled_features"),
+            perl_platform=str(data["config_perl_platform"]),
+            dso_scheme=str(data["config_dso_scheme"]),
+            dso_extension=str(data["config_dso_extension"]),
+            shared_target=str(data["config_shared_target"]),
+            shared_defflag=str(data["config_shared_defflag"]),
         )
 
 
@@ -303,7 +310,6 @@ def _configure_target_args(openssl_dir: Path, platform: str) -> list[str]:
         inherit_from   => [ "{override["inherit_from"]}" ],
         asm_arch       => '{override["asm_arch"]}',
         perlasm_scheme => '{override["perlasm_scheme"]}',
-        dso_scheme     => undef,
     }}
 );
 """
@@ -497,7 +503,14 @@ ZLIB_DEPS = select({json.dumps(entries, indent=indent)})
 _SHARED_LIBRARIES = ("libcrypto", "libssl")
 
 
-def generate_symbol_maps(openssl_dir: Path, out: Path, platform: str, version: OpenSSLVersion, perl_path: str) -> None:
+def generate_symbol_maps(
+    openssl_dir: Path,
+    out: Path,
+    platform: str,
+    hdr: ConfigHeaderData,
+    version: OpenSSLVersion,
+    perl_path: str,
+) -> None:
     """Write the shared library symbol maps OpenSSL's build generates with util/mkdef.pl.
 
     Must run while the configdata.pm of the platform's Configure run is in the
@@ -506,23 +519,10 @@ def generate_symbol_maps(openssl_dir: Path, out: Path, platform: str, version: O
     """
     if platform in WINDOWS_PLATFORMS:
         mkdef_os, extension = "windows", "def"
+    elif hdr.shared_defflag:
+        mkdef_os, extension = hdr.shared_target.removesuffix("-shared"), "ld"
     else:
-        proc = subprocess.run(
-            [
-                perl_path,
-                "-I.",
-                "-Mconfigdata",
-                "-e",
-                'print $target{shared_defflag} ? ($target{shared_target} =~ s/-shared$//r) : ""',
-            ],
-            cwd=openssl_dir,
-            stdout=subprocess.PIPE,
-            check=True,
-            text=True,
-        )
-        mkdef_os, extension = proc.stdout.strip(), "ld"
-        if not mkdef_os:
-            return
+        return
 
     dest = out / "symbols" / get_simple_config_name(platform)
     dest.mkdir(parents=True, exist_ok=True)
@@ -583,21 +583,6 @@ OPENSSL_DEFINES = {json.dumps(platform_delta["openssl_defines"], indent=indent)}
     (output_dir / f"{config_name}.bzl").write_text(content)
 
 
-def _get_platform_metadata(platform: str) -> tuple[str, str, str]:
-    """Return (perl_platform, dso_scheme, dso_extension) for a platform.
-
-    These values are deterministic from the platform type and don't need
-    extraction from configdata.pm.
-    """
-    if platform == WINDOWS_X86_MINGW:
-        return ("mingw", "WIN32", ".dll")
-    if platform in WINDOWS_PLATFORMS:
-        return ("Windows", "WIN32", ".dll")
-    if platform in MAC_PLATFORMS or platform in IOS_PLATFORMS:
-        return ("Unix", "DLFCN", ".dylib")
-    return ("Unix", "DLFCN", ".so")
-
-
 def _render_perl_list(items: tuple[str, ...] | list[str]) -> str:
     """Render a Python list as a Perl array literal."""
     if not items:
@@ -608,13 +593,11 @@ def _render_perl_list(items: tuple[str, ...] | list[str]) -> str:
 
 def _render_configdata_stub(
     hdr: ConfigHeaderData,
-    platform: str,
     disablables: list[str],
     disablables_int: list[str],
     srcs: OverlaySources,
 ) -> str:
     """Render the configdata.pm stub for one platform."""
-    perl_platform, dso_scheme, dso_extension = _get_platform_metadata(platform)
     feature_lines = [f'        "{d}",' for d in hdr.openssl_feature_defines]
     feature_block = "[\n" + "\n".join(feature_lines) + "\n    ]" if feature_lines else "[]"
 
@@ -631,9 +614,9 @@ def _render_configdata_stub(
         "@@DISABLED_PROTOCOLS@@": _render_perl_list(hdr.openssl_disabled_protocols),
         "@@DISABLED_ALGORITHMS@@": _render_perl_list(hdr.openssl_disabled_algorithms),
         "@@DISABLED_FEATURES@@": _render_perl_list(hdr.openssl_disabled_features),
-        "@@PERL_PLATFORM@@": perl_platform,
-        "@@DSO_SCHEME@@": dso_scheme,
-        "@@DSO_EXTENSION@@": dso_extension,
+        "@@PERL_PLATFORM@@": hdr.perl_platform,
+        "@@DSO_SCHEME@@": hdr.dso_scheme,
+        "@@DSO_EXTENSION@@": hdr.dso_extension,
         "@@DISABLABLES@@": " ".join(disablables),
         "@@DISABLABLES_INT@@": " ".join(disablables_int),
     }
@@ -666,7 +649,7 @@ def generate_configdata_stubs(
     for platform, data in list(platform_data.items()) + [(NO_ASM_TARGET, no_asm_data)]:
         subdir = configdata_base / get_simple_config_name(platform)
         subdir.mkdir(parents=True, exist_ok=True)
-        stub = _render_configdata_stub(data.config_header_data, platform, disablables, disablables_int, srcs)
+        stub = _render_configdata_stub(data.config_header_data, disablables, disablables_int, srcs)
         (subdir / "configdata.pm").write_text(stub)
 
 
@@ -1713,12 +1696,12 @@ def main(
         print(f"  Configuring for {platform} ({config_name}) {' '.join(extra)}...")
         data = extract_platform_data(openssl_dir, platform, srcs, perl_path=perl_path, configure_args=extra)
         platform_data[platform] = data
-        generate_symbol_maps(openssl_dir, out, platform, version, perl_path)
+        generate_symbol_maps(openssl_dir, out, platform, data.config_header_data, version, perl_path)
 
     extra = _configure_args_for(NO_ASM_TARGET, configure_args, platform_configure_args)
     print(f"  Configuring for no-asm fallback {' '.join(extra)}...")
     no_asm_data = extract_platform_data(openssl_dir, NO_ASM_TARGET, srcs, perl_path=perl_path, configure_args=extra)
-    generate_symbol_maps(openssl_dir, out, NO_ASM_TARGET, version, perl_path)
+    generate_symbol_maps(openssl_dir, out, NO_ASM_TARGET, no_asm_data.config_header_data, version, perl_path)
 
     print("=== Computing tiered constants ===")
     tiered = compute_tiered_constants(platform_data, no_asm_data)

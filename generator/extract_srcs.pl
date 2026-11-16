@@ -259,6 +259,10 @@ my @config_openssl_sys_defines = @{$config{openssl_sys_defines} // []};
 my @config_openssl_api_defines = @{$config{openssl_api_defines} // []};
 my @config_openssl_feature_defines = @{$config{openssl_feature_defines} // []};
 
+# Platform module values, as OpenSSL's build system computes them.
+use lib "Configurations";
+use platform;
+
 # Output all data as JSON
 use JSON::PP;
 my $json = JSON::PP->new->utf8->canonical->pretty;
@@ -277,6 +281,11 @@ my %output_data = (
     config_bn_ll => ($config{bn_ll} ? JSON::PP::true : JSON::PP::false),
     config_rc4_int => ($config{rc4_int} // "unsigned int"),
     config_processor => ($config{processor} // ""),
+    config_perl_platform => ($target{perl_platform} || "Unix"),
+    config_dso_scheme => ($target{dso_scheme} // ""),
+    config_dso_extension => platform->dsoext(),
+    config_shared_target => ($target{shared_target} // ""),
+    config_shared_defflag => ($target{shared_defflag} // ""),
     config_openssl_sys_defines => \@config_openssl_sys_defines,
     config_openssl_api_defines => \@config_openssl_api_defines,
     config_openssl_feature_defines => \@config_openssl_feature_defines,
