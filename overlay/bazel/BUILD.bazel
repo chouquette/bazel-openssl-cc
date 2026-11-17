@@ -69,9 +69,9 @@ cc_test(
         "@rules_cc//cc/compiler:msvc-cl": ["/std:c++17"],
         "//conditions:default": ["-std=c++17"],
     }),
-    data = ["@openssl"],
+    data = ["//:openssl"],
     env = {
-        "OPENSSL": "$(rlocationpath @openssl)",
+        "OPENSSL": "$(rlocationpath //:openssl)",
     },
     deps = ["@rules_cc//cc/runfiles"],
 )
@@ -79,5 +79,5 @@ cc_test(
 cc_test(
     name = "build_test",
     srcs = ["build_test.cc"],
-    deps = ["@openssl//:ssl"],
+    deps = ["//:ssl"],
 )
