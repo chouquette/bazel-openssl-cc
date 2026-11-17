@@ -60,6 +60,7 @@ load(
     _DARWIN_X86_64_PERLASM_ENTRIES = "PERLASM",
 )
 load("//bazel/constants:defaults.bzl", "USE_PREGENERATED_DEFAULT")
+load("//bazel/constants:directories.bzl", "DIRECTORIES", "DIRECTORY_DEFINES")
 load(
     "//bazel/constants:features.bzl",
     "FEATURE_DEFINES",
@@ -521,10 +522,12 @@ _MSVC_WARNING_COPTS = [
     "/wd4319",
 ]
 
+cc_library(
+    name = "default_directories",
+    defines = DIRECTORY_DEFINES,
+)
+
 COMMON_OPENSSL_COPTS = [
-    "-DOPENSSLDIR=\\\"/etc/ssl\\\"",
-    '-DENGINESDIR=\\"/usr/lib/engines-3.0\\"',
-    "-DMODULESDIR=\\\"/dev/null\\\"",
     "-DOPENSSL_USE_NODELETE",
 ] + select({
     "//configs:android_arm64": ["-mno-outline-atomics"],
@@ -725,7 +728,7 @@ cc_library(
         "//conditions:default": NO_ASM_DEFINES,
     }),
     defines = COMMON_DEFINES,
-    implementation_deps = ZLIB_DEPS,
+    implementation_deps = ZLIB_DEPS + [DIRECTORIES],
     includes = LIBCRYPTO_INCLUDES + select({
         "@platforms//os:windows": LIBCRYPTO_WINDOWS_INCLUDES,
         "//conditions:default": [],
@@ -800,6 +803,7 @@ cc_library(
         "//conditions:default": NO_ASM_DEFINES,
     }),
     defines = COMMON_DEFINES,
+    implementation_deps = [DIRECTORIES],
     includes = ["include"],
     local_defines = COMMON_LOCAL_DEFINES,
     visibility = ["//visibility:public"],
@@ -871,7 +875,10 @@ cc_binary(
     ],
     local_defines = COMMON_LOCAL_DEFINES,
     visibility = ["//visibility:public"],
-    deps = [":ssl"],
+    deps = [
+        DIRECTORIES,
+        ":ssl",
+    ],
 )
 
 collate_into_directory(

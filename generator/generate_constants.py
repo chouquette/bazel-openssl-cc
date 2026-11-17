@@ -1654,6 +1654,38 @@ USE_PREGENERATED_DEFAULT = {not no_pregen}
     (output_dir / "defaults.bzl").write_text(content)
 
 
+DEFAULT_DIRECTORIES = {
+    "OPENSSLDIR": "/etc/ssl",
+    "ENGINESDIR": "/usr/lib/engines-3.0",
+    "MODULESDIR": "/dev/null",
+}
+
+
+def _directory_define(name: str, path: str) -> str:
+    """A cc_library define for a directory, as a C string literal surviving Bourne shell tokenization."""
+    if "'" in path or '"' in path:
+        raise RuntimeError(f"{name}={path!r}: quotes are not supported")
+    escaped = path.replace("\\", "\\\\")
+    return f"'{name}=\"{escaped}\"'"
+
+
+def write_directories_bzl(output_dir: Path, directories: dict[str, str], directories_dependency: str | None) -> None:
+    """Write directories.bzl: the compile-time OPENSSLDIR, ENGINESDIR and MODULESDIR.
+
+    DIRECTORIES is the cc_library whose defines set them: the overlay's
+    :default_directories, or directories_dependency when given.
+    """
+    defines = [] if directories_dependency else [_directory_define(n, p) for n, p in directories.items()]
+    content = f"""\
+# Generated code. DO NOT EDIT.
+
+DIRECTORY_DEFINES = {json.dumps(defines, indent=" " * 4)}
+
+DIRECTORIES = {json.dumps(directories_dependency or "//:default_directories")}
+"""
+    (output_dir / "directories.bzl").write_text(content)
+
+
 def main(
     openssl_source_dir: str,
     output_dir: str,
@@ -1669,6 +1701,8 @@ def main(
     platform_configure_args: dict[str, list[str]] | None = None,
     zlib_dependency: str | None = None,
     no_pregen: bool = False,
+    directories: dict[str, str] | None = None,
+    directories_dependency: str | None = None,
 ) -> None:
     openssl_dir = Path(openssl_source_dir)
     out = Path(output_dir)
@@ -1715,6 +1749,7 @@ def main(
     write_generated_srcs_bzl(constants_dir, tiered)
     write_zlib_bzl(constants_dir, tiered, zlib_dependency)
     write_defaults_bzl(constants_dir, no_pregen)
+    write_directories_bzl(constants_dir, DEFAULT_DIRECTORIES | (directories or {}), directories_dependency)
     write_version_bzl(constants_dir, version)
     write_constants_build(constants_dir)
 
@@ -1935,9 +1970,26 @@ if __name__ == "__main__":
         action="store_true",
         help="Skip the pre-generated archive and make the overlay build with Perl by default",
     )
+    for name, default in DEFAULT_DIRECTORIES.items():
+        parser.add_argument(
+            f"--{name.lower()}",
+            default=None,
+            metavar="PATH",
+            help=f"Compile-time default for {name} (default: {default})",
+        )
+    parser.add_argument(
+        "--directories_dependency",
+        default=None,
+        metavar="LABEL",
+        help="cc_library whose defines set OPENSSLDIR, ENGINESDIR and MODULESDIR, resolved from the generated "
+        "repository, e.g. to select them per configuration. Replaces the --openssldir, --enginesdir and "
+        "--modulesdir defaults",
+    )
     args = parser.parse_args()
     if args.no_pregen and args.bcr_dir:
         parser.error("--no_pregen cannot be combined with --bcr_dir: BCR modules ship the pre-generated archive")
+    if args.directories_dependency and any(getattr(args, name.lower()) for name in DEFAULT_DIRECTORIES):
+        parser.error("--directories_dependency cannot be combined with --openssldir, --enginesdir or --modulesdir")
     perl = _resolve_perl(args.perl)
 
     platform_configure_args: dict[str, list[str]] = {}
@@ -1977,4 +2029,10 @@ if __name__ == "__main__":
             platform_configure_args=platform_configure_args,
             zlib_dependency=args.zlib_dependency,
             no_pregen=args.no_pregen,
+            directories={
+                name: getattr(args, name.lower())
+                for name in DEFAULT_DIRECTORIES
+                if getattr(args, name.lower()) is not None
+            },
+            directories_dependency=args.directories_dependency,
         )
