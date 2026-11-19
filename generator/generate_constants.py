@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -115,6 +116,10 @@ class ConfigHeaderData(NamedTuple):
     dso_extension: str
     shared_target: str
     shared_defflag: str
+    shared_ldflag: str
+    shared_sonameflag: str
+    shlib_version: str
+    shared_libraries: dict[str, str]
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ConfigHeaderData":
@@ -141,6 +146,10 @@ class ConfigHeaderData(NamedTuple):
             dso_extension=str(data["config_dso_extension"]),
             shared_target=str(data["config_shared_target"]),
             shared_defflag=str(data["config_shared_defflag"]),
+            shared_ldflag=str(data["config_shared_ldflag"]),
+            shared_sonameflag=str(data["config_shared_sonameflag"]),
+            shlib_version=str(data["config_shlib_version"]),
+            shared_libraries={str(k): str(v) for k, v in data["config_shared_libraries"].items()},
         )
 
 
@@ -149,6 +158,7 @@ class PlatformData(NamedTuple):
 
     libcrypto_srcs: list[str]
     libssl_srcs: list[str]
+    libssl_shared_extra_srcs: list[str]
     openssl_app_srcs: list[str]
     # perlasm: output -> {script, args}; see extract_srcs.pl.
     perlasm: dict[str, dict[str, Any]]
@@ -187,6 +197,7 @@ class PlatformData(NamedTuple):
         for key in [
             "libcrypto_srcs",
             "libssl_srcs",
+            "libssl_shared_extra_srcs",
             "openssl_app_srcs",
             "libcrypto_defines",
             "libssl_defines",
@@ -202,6 +213,7 @@ class PlatformData(NamedTuple):
         return cls(
             libcrypto_srcs=str_lists["libcrypto_srcs"],
             libssl_srcs=str_lists["libssl_srcs"],
+            libssl_shared_extra_srcs=str_lists["libssl_shared_extra_srcs"],
             openssl_app_srcs=str_lists["openssl_app_srcs"],
             perlasm={out: dict(v) for out, v in sorted(_dict("perlasm").items())},
             libcrypto_defines=sorted(set(str_lists["libcrypto_defines"])),
@@ -503,6 +515,99 @@ ZLIB_DEPS = select({json.dumps(entries, indent=indent)})
 _SHARED_LIBRARIES = ("libcrypto", "libssl")
 
 
+def _symbol_map_extension(platform: str, hdr: ConfigHeaderData) -> str | None:
+    """The extension of the platform's symbol maps, or None when upstream uses none (e.g. macOS)."""
+    if platform in WINDOWS_PLATFORMS:
+        return "def"
+    if hdr.shared_defflag:
+        return "ld"
+    return None
+
+
+def _shared_library_link(platform: str, hdr: ConfigHeaderData, lib: str) -> tuple[list[str], list[str], str | None]:
+    """The cc_shared_library user_link_flags, additional_linker_inputs and win_def_file of a library.
+
+    Mirrors the link lines of upstream's Makefile templates: shared_ldflag,
+    the soname flag and the symbol map. -shared (/dll for MSVC) is left to
+    cc_shared_library, and the macOS install name is relative to @rpath since
+    the library directory is only known at install time.
+    """
+    name = hdr.shared_libraries[lib]
+    flags = [
+        flag
+        for flag in shlex.split(hdr.shared_ldflag.replace("$(SHLIB_VERSION_NUMBER)", hdr.shlib_version))
+        if flag.lower() not in ("-shared", "/dll")
+    ]
+    if hdr.shared_sonameflag:
+        flags += shlex.split(hdr.shared_sonameflag.replace("$(libdir)/", "@rpath/") + name)
+    inputs = []
+    def_file = None
+    extension = _symbol_map_extension(platform, hdr)
+    if extension is not None:
+        symbol_map = f"//:symbols/{get_simple_config_name(platform)}/{lib}.{extension}"
+        if extension == "def":
+            def_file = symbol_map
+        else:
+            inputs.append(symbol_map)
+            flags.append(f"{hdr.shared_defflag}$(location {symbol_map})")
+    unresolved = [flag for flag in flags if "$(" in flag.replace("$(location ", "")]
+    if unresolved:
+        raise RuntimeError(f"Unresolved Make variables in the {platform} {lib} link flags: {unresolved}")
+    return flags, inputs, def_file
+
+
+def write_shared_libraries_bzl(
+    output_dir: Path,
+    platform_data: dict[str, "PlatformData"],
+    no_asm_data: "PlatformData",
+) -> None:
+    """Write shared_libraries.bzl: the file name and link flags of each shared library, per configuration.
+
+    Keyed like the copts selects in the overlay BUILD.bazel.
+    """
+    configs = [
+        (f"//configs:_asm_{get_simple_config_name(platform)}", platform, data)
+        for platform, data in sorted(platform_data.items(), key=lambda item: get_simple_config_name(item[0]))
+    ]
+    configs.append(("//configs:_no_asm_fallback", NO_ASM_TARGET, no_asm_data))
+    configs.append(("//conditions:default", NO_ASM_TARGET, no_asm_data))
+
+    names: dict[str, dict[str, str]] = {lib: {} for lib in _SHARED_LIBRARIES}
+    linkopts: dict[str, dict[str, list[str]]] = {lib: {} for lib in _SHARED_LIBRARIES}
+    inputs: dict[str, dict[str, list[str]]] = {lib: {} for lib in _SHARED_LIBRARIES}
+    def_files: dict[str, dict[str, str | None]] = {lib: {} for lib in _SHARED_LIBRARIES}
+    libssl_extra_srcs: dict[str, list[str]] = {}
+    for key, platform, data in configs:
+        hdr = data.config_header_data
+        libssl_extra_srcs[key] = data.libssl_shared_extra_srcs
+        for lib in _SHARED_LIBRARIES:
+            names[lib][key] = hdr.shared_libraries[lib]
+            linkopts[lib][key], inputs[lib][key], def_files[lib][key] = _shared_library_link(platform, hdr, lib)
+
+    def render(values: dict[str, dict[str, Any]]) -> str:
+        indent = " " * 4
+        entries = ",\n".join(
+            f'{indent}"{lib}": select({json.dumps(values[lib], indent=indent)})'.replace("\n", "\n" + indent)
+            for lib in _SHARED_LIBRARIES
+        )
+        return "{\n" + entries.replace(": null", ": None") + ",\n}"
+
+    content = f"""\
+# Generated code. DO NOT EDIT.
+
+SHARED_LIBRARY_NAMES = {render(names)}
+
+SHARED_LIBRARY_LINKOPTS = {render(linkopts)}
+
+SHARED_LIBRARY_LINKER_INPUTS = {render(inputs)}
+
+SHARED_LIBRARY_DEF_FILES = {render(def_files)}
+
+LIBSSL_SHARED_EXTRA_SRCS = select({json.dumps(libssl_extra_srcs, indent=" " * 4)})
+"""
+    (output_dir / "shared_libraries.bzl").write_text(content)
+
+
 def generate_symbol_maps(
     openssl_dir: Path,
     out: Path,
@@ -517,12 +622,10 @@ def generate_symbol_maps(
     source tree. The --OS value is derived like OpenSSL's Makefile templates do;
     targets without shared_defflag (e.g. macOS) use no symbol map upstream.
     """
-    if platform in WINDOWS_PLATFORMS:
-        mkdef_os, extension = "windows", "def"
-    elif hdr.shared_defflag:
-        mkdef_os, extension = hdr.shared_target.removesuffix("-shared"), "ld"
-    else:
+    extension = _symbol_map_extension(platform, hdr)
+    if extension is None:
         return
+    mkdef_os = "windows" if platform in WINDOWS_PLATFORMS else hdr.shared_target.removesuffix("-shared")
 
     dest = out / "symbols" / get_simple_config_name(platform)
     dest.mkdir(parents=True, exist_ok=True)
@@ -1748,6 +1851,7 @@ def main(
     write_templates_bzl(constants_dir, templates, stdout_scripts)
     write_generated_srcs_bzl(constants_dir, tiered)
     write_zlib_bzl(constants_dir, tiered, zlib_dependency)
+    write_shared_libraries_bzl(constants_dir, platform_data, no_asm_data)
     write_defaults_bzl(constants_dir, no_pregen)
     write_directories_bzl(constants_dir, DEFAULT_DIRECTORIES | (directories or {}), directories_dependency)
     write_version_bzl(constants_dir, version)

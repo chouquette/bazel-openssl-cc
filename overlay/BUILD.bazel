@@ -4,6 +4,7 @@ load("@package_metadata//purl:purl.bzl", "purl")
 load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_shared_library.bzl", "cc_shared_library")
 load("@rules_perl//perl:perl.bzl", "perl_binary", "perl_library")
 load("//bazel:collate_into_directory.bzl", "collate_into_directory")
 load("//bazel:openssl_genrule.bzl", "openssl_perl_genrule")
@@ -171,6 +172,14 @@ load(
     "NO_ASM_CRYPTO_EXTRA_SRCS",
     "NO_ASM_DEFINES",
     "NO_ASM_SSL_EXTRA_SRCS",
+)
+load(
+    "//bazel/constants:shared_libraries.bzl",
+    "LIBSSL_SHARED_EXTRA_SRCS",
+    "SHARED_LIBRARY_DEF_FILES",
+    "SHARED_LIBRARY_LINKER_INPUTS",
+    "SHARED_LIBRARY_LINKOPTS",
+    "SHARED_LIBRARY_NAMES",
 )
 load(
     "//bazel/constants:templates.bzl",
@@ -759,6 +768,27 @@ COMMON_LIBSSL_HDRS = glob(include = ["ssl/**/*.h"]) + glob(
     allow_empty = True,
 )
 
+_LIBSSL_COPTS = COMMON_OPENSSL_COPTS + FEATURE_DEFINES + select({
+    "//configs:_asm_android_arm64": _ANDROID_ARM64_OPENSSL_DEFINES + _ANDROID_ARM64_LIBSSL_DEFINES,
+    "//configs:_asm_android_x86_64": _ANDROID_X86_64_OPENSSL_DEFINES + _ANDROID_X86_64_LIBSSL_DEFINES,
+    "//configs:_asm_darwin_arm64": _DARWIN_ARM64_OPENSSL_DEFINES + _DARWIN_ARM64_LIBSSL_DEFINES,
+    "//configs:_asm_darwin_x86_64": _DARWIN_X86_64_OPENSSL_DEFINES + _DARWIN_X86_64_LIBSSL_DEFINES,
+    "//configs:_asm_freebsd_aarch64": _FREEBSD_AARCH64_OPENSSL_DEFINES + _FREEBSD_AARCH64_LIBSSL_DEFINES,
+    "//configs:_asm_freebsd_x86_64": _FREEBSD_X86_64_OPENSSL_DEFINES + _FREEBSD_X86_64_LIBSSL_DEFINES,
+    "//configs:_asm_ios_arm64": _IOS_ARM64_OPENSSL_DEFINES + _IOS_ARM64_LIBSSL_DEFINES,
+    "//configs:_asm_linux_aarch64": _LINUX_AARCH64_OPENSSL_DEFINES + _LINUX_AARCH64_LIBSSL_DEFINES,
+    "//configs:_asm_linux_arm": _LINUX_ARM_OPENSSL_DEFINES + _LINUX_ARM_LIBSSL_DEFINES,
+    "//configs:_asm_linux_ppc64le": _LINUX_PPC64LE_OPENSSL_DEFINES + _LINUX_PPC64LE_LIBSSL_DEFINES,
+    "//configs:_asm_linux_riscv64": _LINUX_RISCV64_OPENSSL_DEFINES + _LINUX_RISCV64_LIBSSL_DEFINES,
+    "//configs:_asm_linux_s390x": _LINUX_S390X_OPENSSL_DEFINES + _LINUX_S390X_LIBSSL_DEFINES,
+    "//configs:_asm_linux_x86_64": _LINUX_X86_64_OPENSSL_DEFINES + _LINUX_X86_64_LIBSSL_DEFINES,
+    "//configs:_asm_windows_arm64": _WINDOWS_ARM64_OPENSSL_DEFINES + _WINDOWS_ARM64_LIBSSL_DEFINES,
+    "//configs:_asm_windows_x64": _WINDOWS_X64_OPENSSL_DEFINES + _WINDOWS_X64_LIBSSL_DEFINES,
+    "//configs:_asm_windows_x64_mingw": _WINDOWS_X64_MINGW_OPENSSL_DEFINES + _WINDOWS_X64_MINGW_LIBSSL_DEFINES,
+    "//configs:_no_asm_fallback": NO_ASM_DEFINES,
+    "//conditions:default": NO_ASM_DEFINES,
+})
+
 cc_library(
     name = "ssl",
     srcs = COMMON_SSL_SRCS + select({
@@ -782,31 +812,21 @@ cc_library(
         "//conditions:default": NO_ASM_SSL_EXTRA_SRCS,
     }),
     hdrs = COMMON_LIBSSL_HDRS,
-    copts = COMMON_OPENSSL_COPTS + FEATURE_DEFINES + select({
-        "//configs:_asm_android_arm64": _ANDROID_ARM64_OPENSSL_DEFINES + _ANDROID_ARM64_LIBSSL_DEFINES,
-        "//configs:_asm_android_x86_64": _ANDROID_X86_64_OPENSSL_DEFINES + _ANDROID_X86_64_LIBSSL_DEFINES,
-        "//configs:_asm_darwin_arm64": _DARWIN_ARM64_OPENSSL_DEFINES + _DARWIN_ARM64_LIBSSL_DEFINES,
-        "//configs:_asm_darwin_x86_64": _DARWIN_X86_64_OPENSSL_DEFINES + _DARWIN_X86_64_LIBSSL_DEFINES,
-        "//configs:_asm_freebsd_aarch64": _FREEBSD_AARCH64_OPENSSL_DEFINES + _FREEBSD_AARCH64_LIBSSL_DEFINES,
-        "//configs:_asm_freebsd_x86_64": _FREEBSD_X86_64_OPENSSL_DEFINES + _FREEBSD_X86_64_LIBSSL_DEFINES,
-        "//configs:_asm_ios_arm64": _IOS_ARM64_OPENSSL_DEFINES + _IOS_ARM64_LIBSSL_DEFINES,
-        "//configs:_asm_linux_aarch64": _LINUX_AARCH64_OPENSSL_DEFINES + _LINUX_AARCH64_LIBSSL_DEFINES,
-        "//configs:_asm_linux_arm": _LINUX_ARM_OPENSSL_DEFINES + _LINUX_ARM_LIBSSL_DEFINES,
-        "//configs:_asm_linux_ppc64le": _LINUX_PPC64LE_OPENSSL_DEFINES + _LINUX_PPC64LE_LIBSSL_DEFINES,
-        "//configs:_asm_linux_riscv64": _LINUX_RISCV64_OPENSSL_DEFINES + _LINUX_RISCV64_LIBSSL_DEFINES,
-        "//configs:_asm_linux_s390x": _LINUX_S390X_OPENSSL_DEFINES + _LINUX_S390X_LIBSSL_DEFINES,
-        "//configs:_asm_linux_x86_64": _LINUX_X86_64_OPENSSL_DEFINES + _LINUX_X86_64_LIBSSL_DEFINES,
-        "//configs:_asm_windows_arm64": _WINDOWS_ARM64_OPENSSL_DEFINES + _WINDOWS_ARM64_LIBSSL_DEFINES,
-        "//configs:_asm_windows_x64": _WINDOWS_X64_OPENSSL_DEFINES + _WINDOWS_X64_LIBSSL_DEFINES,
-        "//configs:_asm_windows_x64_mingw": _WINDOWS_X64_MINGW_OPENSSL_DEFINES + _WINDOWS_X64_MINGW_LIBSSL_DEFINES,
-        "//configs:_no_asm_fallback": NO_ASM_DEFINES,
-        "//conditions:default": NO_ASM_DEFINES,
-    }),
+    copts = _LIBSSL_COPTS,
     defines = COMMON_DEFINES,
     implementation_deps = [DIRECTORIES],
     includes = ["include"],
     local_defines = COMMON_LOCAL_DEFINES,
     visibility = ["//visibility:public"],
+    deps = [":crypto"],
+)
+
+cc_library(
+    name = "ssl_shared_extra",
+    srcs = LIBSSL_SHARED_EXTRA_SRCS,
+    copts = _LIBSSL_COPTS,
+    implementation_deps = [DIRECTORIES],
+    local_defines = COMMON_LOCAL_DEFINES,
     deps = [":crypto"],
 )
 
@@ -820,8 +840,8 @@ COMMON_APP_HDRS = _ROOT_HDRS + glob(
     ],
 )
 
-cc_binary(
-    name = "openssl",
+cc_library(
+    name = "openssl_app",
     srcs = COMMON_APP_SRCS + select({
         "//configs:_asm_android_arm64": _ANDROID_ARM64_ASM_APP_EXTRA,
         "//configs:_asm_android_x86_64": _ANDROID_X86_64_ASM_APP_EXTRA,
@@ -874,11 +894,53 @@ cc_binary(
         "apps/include",
     ],
     local_defines = COMMON_LOCAL_DEFINES,
-    visibility = ["//visibility:public"],
     deps = [
         DIRECTORIES,
         ":ssl",
     ],
+    alwayslink = True,
+)
+
+cc_binary(
+    name = "openssl",
+    visibility = ["//visibility:public"],
+    deps = [":openssl_app"],
+)
+
+# --- Shared libraries ---
+
+cc_shared_library(
+    name = "libcrypto_shared",
+    additional_linker_inputs = SHARED_LIBRARY_LINKER_INPUTS["libcrypto"],
+    shared_lib_name = SHARED_LIBRARY_NAMES["libcrypto"],
+    user_link_flags = SHARED_LIBRARY_LINKOPTS["libcrypto"],
+    visibility = ["//visibility:public"],
+    win_def_file = SHARED_LIBRARY_DEF_FILES["libcrypto"],
+    deps = [":crypto"],
+)
+
+cc_shared_library(
+    name = "libssl_shared",
+    additional_linker_inputs = SHARED_LIBRARY_LINKER_INPUTS["libssl"],
+    dynamic_deps = [":libcrypto_shared"],
+    shared_lib_name = SHARED_LIBRARY_NAMES["libssl"],
+    user_link_flags = SHARED_LIBRARY_LINKOPTS["libssl"],
+    visibility = ["//visibility:public"],
+    win_def_file = SHARED_LIBRARY_DEF_FILES["libssl"],
+    deps = [
+        ":ssl",
+        ":ssl_shared_extra",
+    ],
+)
+
+cc_binary(
+    name = "openssl_dynamic",
+    dynamic_deps = [
+        ":libcrypto_shared",
+        ":libssl_shared",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":openssl_app"],
 )
 
 collate_into_directory(

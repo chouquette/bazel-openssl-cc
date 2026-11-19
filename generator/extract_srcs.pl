@@ -182,6 +182,24 @@ foreach my $src (sort keys %openssl_app_srcs) {
     }
 }
 
+# Sources the shared libssl compiles on top of the static one: libcrypto
+# internals (e.g. crypto/packet.c) that a static link resolves from libcrypto.
+my %libssl_static_objs_srcs;
+foreach my $obj (@{$unified_info{sources}->{libssl}}) {
+    $libssl_static_objs_srcs{$_} = () foreach @{$unified_info{sources}->{$obj} || []};
+}
+my %libssl_shared_extra_srcs;
+foreach my $obj (@{$unified_info{shared_sources}->{libssl} || []}) {
+    foreach my $src (@{$unified_info{sources}->{$obj} || []}) {
+        next if exists $libssl_static_objs_srcs{$src};
+        next unless $src =~ m/\.(c|S|s|asm)$/;
+        die "$src: generated shared-only libssl sources are not supported\n"
+            if exists $unified_info{generate}->{$src};
+        $libssl_shared_extra_srcs{normalize_path($src)} = ();
+    }
+}
+my @libssl_shared_extra_srcs_list = sort keys %libssl_shared_extra_srcs;
+
 # perlasm: output -> script and the extra arguments upstream passes after the
 # perlasm scheme (e.g. the RISC-V extension variants). The scheme itself is
 # chosen by the overlay per configuration, so it is not recorded here.
@@ -269,6 +287,7 @@ my $json = JSON::PP->new->utf8->canonical->pretty;
 my %output_data = (
     libcrypto_srcs => \@libcrypto_srcs_list,
     libssl_srcs => \@libssl_srcs_list,
+    libssl_shared_extra_srcs => \@libssl_shared_extra_srcs_list,
     openssl_app_srcs => \@openssl_app_srcs_list,
     perlasm => \%perlasm_entries,
     libcrypto_defines => \@libcrypto_defines_list,
@@ -286,6 +305,12 @@ my %output_data = (
     config_dso_extension => platform->dsoext(),
     config_shared_target => ($target{shared_target} // ""),
     config_shared_defflag => ($target{shared_defflag} // ""),
+    config_shared_ldflag => ($target{shared_ldflag} // ""),
+    config_shared_sonameflag => ($target{shared_sonameflag} // ""),
+    config_shlib_version => ($config{shlib_version} // ""),
+    config_shared_libraries => {
+        map { $_ => platform->sharedlib($_) } qw(libcrypto libssl)
+    },
     config_openssl_sys_defines => \@config_openssl_sys_defines,
     config_openssl_api_defines => \@config_openssl_api_defines,
     config_openssl_feature_defines => \@config_openssl_feature_defines,
